@@ -270,11 +270,13 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		-- do this for holes
 		hole_counter = identify_individual_holes_or_hills( minp, maxp, ax, az, i, chunksize,
 			holes_markmap, holes_merge_into, hole_counter, hole_data, h_real, h_min,
+			-- h_max>0 because we do not want to create pools/fill land below sea level
 			( h_max and h_real and h_max>h_real and h_max<maxp.y and h_max>minp.y and h_max>0));
 		-- ..and for hills
 		hill_counter = identify_individual_holes_or_hills( minp, maxp, ax, az, i, chunksize,
 			hills_markmap, hills_merge_into, hill_counter, hill_data, h_real, h_max,
-			( h_min and h_real and h_min<h_real and h_min<maxp.y and h_min>minp.y and h_min>0));
+			-- the socket of individual hills may well lie below water level
+			( h_min and h_real and h_min<h_real and h_min<maxp.y and h_min>minp.y and h_min>minp.y));
 	end
 	end
 
