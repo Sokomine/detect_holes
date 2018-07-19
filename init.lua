@@ -1,4 +1,3 @@
-done_first = false
 
 minetest.register_on_generated(function(minp, maxp, seed)
 
@@ -205,26 +204,24 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 
-	if( done_first == true ) then
---		return;
-	end
-	done_first = true;
-
-	t1 = minetest.get_us_time();
+	local t1 = minetest.get_us_time();
 	local heightmap = minetest.get_mapgen_object('heightmap');
 	local chunksize = maxp.x - minp.x + 1;
 
-	local minheight = {}
-	local maxheight = {}
 
 	-- detect places where nodes might be removed or added without changing the borders
 	-- of the mapchunk; afterwards, the landscape may be levelled, but one hill or hole
 	-- cannot yet be distinguished from the other;
 	-- more complex shapes may require multiple runs
+	-- Note: There is no general merging here (apart fromm the two runs) because MT maps are
+	--       usually very small-scale and there would be too many areas that may need merging.
+	local minheight = {}
+	local maxheight = {}
 	for j=1, 2 do
 		local i = 0
 		for az=minp.z,maxp.z do
 		for ax=minp.x,maxp.x do
+			-- fill minheight and maxheight with data whereever hills or holes are
 			mark_min_max_height(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, 1);
 			i = i+1
 		end
@@ -235,13 +232,13 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		-- the previous run could not cover all situations; check from the other side now
 		for az=maxp.z,minp.z,-1 do
 		for ax=maxp.x,minp.x,-1 do
+			-- update minheight and maxheight for hills and holes; but this time, start from the
+			-- opposite corner of the mapchunk in order to preserve what is needed there
 			mark_min_max_height(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, -1);
 			i = i-1;
 		end
 		end
 	end
-	t2 = minetest.get_us_time();
-	print("Time elapsed: "..tostring( t2-t1 ));
 
 
 	-- distinguish the individual hills and holes from each other so that we may treat
@@ -283,6 +280,8 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	holes = merge_if_same_hole_or_hill(hole_data, holes_merge_into);
 	hills = merge_if_same_hole_or_hill(hill_data, hills_merge_into);
 
+	local t2 = minetest.get_us_time();
+	print("Time elapsed: "..tostring( t2-t1 ));
 
 
 	-- this is just for visualization
