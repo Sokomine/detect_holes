@@ -294,19 +294,11 @@ end
 minetest.register_on_generated(function(minp, maxp, seed)
 
 	local heightmap = minetest.get_mapgen_object('heightmap');
-
-	local t1 = minetest.get_us_time();
 	local chunksize = maxp.x - minp.x + 1;
 
+	local t1 = minetest.get_us_time();
 	extrema = mark_min_max_height_in_mapchunk(minp, maxp, heightmap);
-	hills_and_holes = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
-	local holes = hills_and_holes.holes;
-	local hills = hills_and_holes.hills;
-	local holes_merge_into = hills_and_holes.holes_merge_into;
-	local hills_merge_into = hills_and_holes.hills_merge_into;
-	local holes_markmap = hills_and_holes.holes_markmap;
-	local hills_markmap = hills_and_holes.hills_markmap;
-
+	detected = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
 	local t2 = minetest.get_us_time();
 	print("Time elapsed: "..tostring( t2-t1 ));
 
@@ -322,41 +314,35 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		 "flowers:mushroom_brown", "flowers:mushroom_red",
 		 "flowers:dandelion_white", "flowers:rose", "flowers:geranium"};
 	local next_type = 0;
-	for id, data in pairs( holes.merged ) do
-		if( holes.merged[id].size > 5 ) then
+	for id, data in pairs( detected.holes.merged ) do
+		if( detected.holes.merged[id].size > 5 ) then
 			next_type = next_type+1;
 			if( next_type < #materials ) then
-				holes.merged[id].material = materials[ next_type ];
+				detected.holes.merged[id].material = materials[ next_type ];
 			else
-				holes.merged[id].material = "default:brick";
+				detected.holes.merged[id].material = "default:brick";
 			end
 		else
-			holes.merged[id].material = "default:meselamp";
+			detected.holes.merged[id].material = "default:meselamp";
 		end
-		if( not( holes.merged[id].material )) then
-			holes.merged[id].material = "default:mese";
-		end
-		-- print("Hole "..tostring(id).." gets "..tostring(holes.merged[id].material))
+		-- print("Hole "..tostring(id).." gets "..tostring(detected.holes.merged[id].material))
 	end
 
 	materials = {"wool:white", "wool:yellow", "wool:orange", "wool:red", "wool:magenta",
 		     "wool:blue", "wool:black", "wool:brown", "wool:grey"}
 	next_type = 0;
-	for id, data in pairs( hills.merged ) do
-		if( hills.merged[id].size > 5 ) then
+	for id, data in pairs( detected.hills.merged ) do
+		if( detected.hills.merged[id].size > 5 ) then
 			next_type = next_type+1;
 			if( next_type < #materials ) then
-				hills.merged[id].material = materials[ next_type ];
+				detected.hills.merged[id].material = materials[ next_type ];
 			else
-				hills.merged[id].material = "default:stonebrick";
+				detected.hills.merged[id].material = "default:stonebrick";
 			end
 		else
-			hills.merged[id].material = "default:sandstonebrick";
+			detected.hills.merged[id].material = "default:sandstonebrick";
 		end
-		if( not( hills.merged[id].material )) then
-			hills.merged[id].material = "default:mese";
-		end
-		-- print("Hill "..tostring(id).." gets "..tostring(hills.merged[id].material))
+		-- print("Hill "..tostring(id).." gets "..tostring(detected.hills.merged[id].material))
 	end
 
 
@@ -365,28 +351,31 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	for az=minp.z,maxp.z do
 	for ax=minp.x,maxp.x do
 		i = i+1;
+		-- mark mapchunk borders so that it becomes easier to understand why some holes and hills
+		-- cannot be detected by this approach
 		if( ax==minp.x or ax==maxp.x or az==minp.z or az==maxp.z) then
 			minetest.set_node({ x=ax, z=az, y=heightmap[i]}, {name="wool:pink"});
 		else
-			if( hills_markmap[i] and hills_markmap[i]>0) then
-				id = hills_merge_into[ hills_markmap[i] ];
-				if( hills.merged[ id ] and hills.merged[ id ].material) then
+			-- is there a hill?
+			if( detected.hills_markmap[i] and detected.hills_markmap[i]>0) then
+				id = detected.hills_merge_into[ detected.hills_markmap[i] ];
+				if( detected.hills.merged[ id ] and detected.hills.merged[ id ].material) then
 					for y=extrema.minheight[i]+1, heightmap[i] do
-						minetest.set_node( {x=ax, z=az, y=y}, {name=hills.merged[id].material} );
+						minetest.set_node( {x=ax, z=az, y=y}, {name=detected.hills.merged[id].material} );
 					end
 				else
 					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
-					print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( holes.merged[id])) -- TODO
+					print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( detected.hills.merged[id])) -- TODO
 				end
 			end
 --]]
-			if( holes_markmap[i] and holes_markmap[i]>0) then
-				id = holes_merge_into[ holes_markmap[i] ]; --holes_merge_into[ holes_markmap[i] ]];
-				if( holes.merged[ id ] and holes.merged[ id ].material) then
-					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=holes.merged[id].material} );
+			if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
+				id = detected.holes_merge_into[ detected.holes_markmap[i] ];
+				if( detected.holes.merged[ id ] and detected.holes.merged[ id ].material) then
+					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=detected.holes.merged[id].material} );
 				else
 					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
-					print("Error: No material for hole id "..tostring(id)..", merged into "..tostring( holes.merged[id])) -- TODO
+					print("Error: No material for hole id "..tostring(id)..", merged into "..tostring( detected.holes.merged[id])) -- TODO
 				end
 				-- mark holes additionally with a glass cover
 				minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]+1}, {name="default:glass"});
