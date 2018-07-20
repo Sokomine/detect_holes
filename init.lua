@@ -1,9 +1,9 @@
 
-minetest.register_on_generated(function(minp, maxp, seed)
 
+	-- helper function for mark_min_max_height_in_mapchunk(..)
 	-- math_extrema: math.min for maxheight; math.max for minheight
 	-- populates the tables minheight and maxheight with data;
-	local mark_min_max_height = function(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, direction)
+	local mark_min_max_height_local = function(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, direction)
 		i = i+1;
 		if( ax==minp.x or az==minp.z or ax==maxp.x or az==maxp.z) then
 			minheight[i] = heightmap[i];
@@ -96,7 +96,43 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		end
 	end
 
+-- detect places where nodes might be removed or added without changing the borders
+-- of the mapchunk; afterwards, the landscape may be levelled, but one hill or hole
+-- cannot yet be distinguished from the other;
+-- more complex shapes may require multiple runs
+-- Note: There is no general merging here (apart fromm the two runs) because MT maps are
+--       usually very small-scale and there would be too many areas that may need merging.
+local mark_min_max_height_in_mapchunk = function(minp, maxp, heightmap)
+	local chunksize = maxp.x - minp.x + 1;
+	local minheight = {}
+	local maxheight = {}
+	for j=1, 2 do
+		local i = 0
+		for az=minp.z,maxp.z do
+		for ax=minp.x,maxp.x do
+			-- fill minheight and maxheight with data whereever hills or holes are
+			mark_min_max_height_local(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, 1);
+			i = i+1
+		end
+		end
 
+		-- we keep i the way it is;
+		i = i+1;
+		-- the previous run could not cover all situations; check from the other side now
+		for az=maxp.z,minp.z,-1 do
+		for ax=maxp.x,minp.x,-1 do
+			-- update minheight and maxheight for hills and holes; but this time, start from the
+			-- opposite corner of the mapchunk in order to preserve what is needed there
+			mark_min_max_height_local(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, -1);
+			i = i-1;
+		end
+		end
+	end
+	return {minheight = minheight, maxheight = maxheight};
+end
+
+
+	-- helper function for mark_holes_and_hills_in_mapchunk(..)
 	local identify_individual_holes_or_hills = function( minp, maxp, ax, az, i, chunksize, markmap, merge_into, hole_counter, hole_data, h_real, h_max, condition)
 		markmap[ i ] = 0;
 		-- no hole or hill
@@ -173,6 +209,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 
+	-- helper function for mark_holes_and_hills_in_mapchunk(..)
 	-- works the same for hills and holes
 	local merge_if_same_hole_or_hill = function(hole_data, merge_into)
 		local id2merged = {}
@@ -204,43 +241,8 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 
-	local t1 = minetest.get_us_time();
-	local heightmap = minetest.get_mapgen_object('heightmap');
+local mark_holes_and_hills_in_mapchunk = function( minp, maxp, heightmap, minheight, maxheight)
 	local chunksize = maxp.x - minp.x + 1;
-
-
-	-- detect places where nodes might be removed or added without changing the borders
-	-- of the mapchunk; afterwards, the landscape may be levelled, but one hill or hole
-	-- cannot yet be distinguished from the other;
-	-- more complex shapes may require multiple runs
-	-- Note: There is no general merging here (apart fromm the two runs) because MT maps are
-	--       usually very small-scale and there would be too many areas that may need merging.
-	local minheight = {}
-	local maxheight = {}
-	for j=1, 2 do
-		local i = 0
-		for az=minp.z,maxp.z do
-		for ax=minp.x,maxp.x do
-			-- fill minheight and maxheight with data whereever hills or holes are
-			mark_min_max_height(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, 1);
-			i = i+1
-		end
-		end
-
-		-- we keep i the way it is;
-		i = i+1;
-		-- the previous run could not cover all situations; check from the other side now
-		for az=maxp.z,minp.z,-1 do
-		for ax=maxp.x,minp.x,-1 do
-			-- update minheight and maxheight for hills and holes; but this time, start from the
-			-- opposite corner of the mapchunk in order to preserve what is needed there
-			mark_min_max_height(minp, maxp, heightmap, ax, az, i, chunksize, minheight, maxheight, -1);
-			i = i-1;
-		end
-		end
-	end
-
-
 	-- distinguish the individual hills and holes from each other so that we may treat
 	-- each one diffrently if so desired
 	local holes_markmap = {}
@@ -277,8 +279,33 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 	end
 
+	-- a hole or hill might have been found from diffrent directions and thus
+	-- might have gotten diffrent ids; merge them if they represent the same
+	-- hole or hill
 	holes = merge_if_same_hole_or_hill(hole_data, holes_merge_into);
 	hills = merge_if_same_hole_or_hill(hill_data, hills_merge_into);
+
+	return {holes = holes, holes_merge_into = holes_merge_into, holes_markmap = holes_markmap,
+	        hills = hills, hills_merge_into = hills_merge_into, hills_markmap = hills_markmap};
+end
+
+
+
+minetest.register_on_generated(function(minp, maxp, seed)
+
+	local heightmap = minetest.get_mapgen_object('heightmap');
+
+	local t1 = minetest.get_us_time();
+	local chunksize = maxp.x - minp.x + 1;
+
+	extrema = mark_min_max_height_in_mapchunk(minp, maxp, heightmap);
+	hills_and_holes = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
+	local holes = hills_and_holes.holes;
+	local hills = hills_and_holes.hills;
+	local holes_merge_into = hills_and_holes.holes_merge_into;
+	local hills_merge_into = hills_and_holes.hills_merge_into;
+	local holes_markmap = hills_and_holes.holes_markmap;
+	local hills_markmap = hills_and_holes.hills_markmap;
 
 	local t2 = minetest.get_us_time();
 	print("Time elapsed: "..tostring( t2-t1 ));
@@ -344,11 +371,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			if( hills_markmap[i] and hills_markmap[i]>0) then
 				id = hills_merge_into[ hills_markmap[i] ];
 				if( hills.merged[ id ] and hills.merged[ id ].material) then
-					for y=minheight[i]+1, heightmap[i] do
+					for y=extrema.minheight[i]+1, heightmap[i] do
 						minetest.set_node( {x=ax, z=az, y=y}, {name=hills.merged[id].material} );
 					end
 				else
-					minetest.set_node( {x=ax, z=az, y=maxheight[i]}, {name="default:diamondblock"});
+					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
 					print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( holes.merged[id])) -- TODO
 				end
 			end
@@ -356,13 +383,13 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			if( holes_markmap[i] and holes_markmap[i]>0) then
 				id = holes_merge_into[ holes_markmap[i] ]; --holes_merge_into[ holes_markmap[i] ]];
 				if( holes.merged[ id ] and holes.merged[ id ].material) then
-					minetest.set_node( {x=ax, z=az, y=maxheight[i]}, {name=holes.merged[id].material} );
+					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=holes.merged[id].material} );
 				else
-					minetest.set_node( {x=ax, z=az, y=maxheight[i]}, {name="default:diamondblock"});
+					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
 					print("Error: No material for hole id "..tostring(id)..", merged into "..tostring( holes.merged[id])) -- TODO
 				end
 				-- mark holes additionally with a glass cover
-				minetest.set_node( {x=ax, z=az, y=maxheight[i]+1}, {name="default:glass"});
+				minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]+1}, {name="default:glass"});
 			end
 --[[
 				-- highlandpools
