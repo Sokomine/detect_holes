@@ -346,6 +346,29 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 
+	local adjusted_heightmap = {}
+	local i = 0
+	for az=minp.z,maxp.z do
+	for ax=minp.x,maxp.x do
+		i = i+1;
+		local real_h = heightmap[i];
+		local max_h = extrema.maxheight[i];
+		local min_h = extrema.minheight[i];
+
+		-- lower hills
+		if(     min_h  < real_h ) then
+			adjusted_heightmap[i] = min_h;
+		-- cover holes
+		elseif( real_h < max_h  and real_h <= min_h) then
+			adjusted_heightmap[i] = max_h;
+		else
+			adjusted_heightmap[i] = real_h;
+		end
+	end
+	end
+
+	local adjust_height = false; -- just a mode for debugging
+
 	-- show something to the user; change the landscape
 	local i = 0
 	for az=minp.z,maxp.z do
@@ -359,27 +382,42 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			-- is there a hill?
 			if( detected.hills_markmap[i] and detected.hills_markmap[i]>0) then
 				id = detected.hills_merge_into[ detected.hills_markmap[i] ];
-				if( detected.hills.merged[ id ] and detected.hills.merged[ id ].material) then
-					for y=extrema.minheight[i]+1, heightmap[i] do
-						minetest.set_node( {x=ax, z=az, y=y}, {name=detected.hills.merged[id].material} );
+
+				if( adjust_height ) then
+					minetest.set_node( {x=ax, z=az, y=adjusted_heightmap[i]}, {name=detected.hills.merged[id].material} );
+					for y=adjusted_heightmap[i]+1, heightmap[i] do
+						minetest.set_node( {x=ax, z=az, y=y}, {name="air"} );
 					end
 				else
-					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
-					print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( detected.hills.merged[id])) -- TODO
+					if( detected.hills.merged[ id ] and detected.hills.merged[ id ].material) then
+						for y=extrema.minheight[i]+1, heightmap[i] do
+							minetest.set_node( {x=ax, z=az, y=y}, {name=detected.hills.merged[id].material} );
+						end
+					else
+						minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
+						print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( detected.hills.merged[id])) -- TODO
+					end
 				end
+				--]]
 			end
 --]]
 			if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
 				id = detected.holes_merge_into[ detected.holes_markmap[i] ];
-				if( detected.holes.merged[ id ] and detected.holes.merged[ id ].material) then
-					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=detected.holes.merged[id].material} );
+
+				if( adjust_height ) then
+					minetest.set_node( {x=ax, z=az, y=adjusted_heightmap[i]}, {name=detected.holes.merged[id].material} );
 				else
-					minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
-					print("Error: No material for hole id "..tostring(id)..", merged into "..tostring( detected.holes.merged[id])) -- TODO
+					if( detected.holes.merged[ id ] and detected.holes.merged[ id ].material) then
+						minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=detected.holes.merged[id].material} );
+					else
+						minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name="default:diamondblock"});
+						print("Error: No material for hole id "..tostring(id)..", merged into "..tostring( detected.holes.merged[id])) -- TODO
+					end
 				end
 				-- mark holes additionally with a glass cover
 				minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]+1}, {name="default:glass"});
 			end
+
 --[[
 				-- highlandpools
 				for y=hm+1, hv do
