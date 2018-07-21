@@ -178,9 +178,9 @@ local identify_individual_holes_or_hills = function( minp, maxp, ax, az, i, chun
 
 	-- gather some statistical data in hole_data
 	if( markmap[ i ]>0 ) then
-		id = markmap[ i ];
+		local id = markmap[ i ];
 		-- height difference
-		ay = math.abs(h_max - h_real);
+		local ay = math.abs(h_max - h_real);
 		if( not( hole_data[ id ])) then
 			hole_data[ id ] = {
 				minp = {x=ax, z=az, y=math.min(h_max, h_real)},
@@ -214,7 +214,7 @@ end
 local merge_if_same_hole_or_hill = function(hole_data, merge_into)
 	local id2merged = {}
 	local merged = {}
-	hole_counter = 1;
+	local hole_counter = 1;
 	-- we already know from merge_into that k needs to be merged into v
 	for k,v in ipairs(merge_into) do
 		-- we have not covered the merge target
@@ -282,13 +282,94 @@ local mark_holes_and_hills_in_mapchunk = function( minp, maxp, heightmap, minhei
 	-- a hole or hill might have been found from diffrent directions and thus
 	-- might have gotten diffrent ids; merge them if they represent the same
 	-- hole or hill
-	holes = merge_if_same_hole_or_hill(hole_data, holes_merge_into);
-	hills = merge_if_same_hole_or_hill(hill_data, hills_merge_into);
+	local holes = merge_if_same_hole_or_hill(hole_data, holes_merge_into);
+	local hills = merge_if_same_hole_or_hill(hill_data, hills_merge_into);
 
 	return {holes = holes, holes_merge_into = holes_merge_into, holes_markmap = holes_markmap,
 	        hills = hills, hills_merge_into = hills_merge_into, hills_markmap = hills_markmap};
 end
 
+
+-- create a (potential) new heightmap where all the hills we discovered are flattened and all
+-- holes filled with something so that we get more flat terrain;
+-- this function also adjusts
+-- 	detected.hills.merged[id].target_height (set to the flattened value)
+-- 	and detected.hills_markmap[i]  for easier access without having to go throuh
+-- 	                               detected.hills_merge_into in the future
+-- (same for holes)
+local heightmap_with_hills_lowered_and_holes_filled = function( minp, maxp, heightmap, extrema, detected)
+	local adjusted_heightmap = {}
+	local chunksize = maxp.x - minp.x + 1;
+	local i = 0
+	for az=minp.z,maxp.z do
+	for ax=minp.x,maxp.x do
+		i = i+1;
+
+		-- no changes at the borders of the mapchunk
+		if( ax==minp.x or ax==maxp.x or az==minp.z or az==maxp.z) then
+			adjusted_heightmap[i] = heightmap[i];
+		else
+			-- make sure it gets one value set
+			adjusted_heightmap[i] = heightmap[i];
+
+			-- is there a hill?
+			local hill_id = detected.hills_markmap[i];
+			if( hill_id and hill_id>0) then
+				-- which hill are we dealing with?
+				local id = detected.hills_merge_into[ hill_id ];
+				local new_height = detected.hills.merged[id].target_height;
+				if( not( new_height )) then
+					-- target height: height if this hill would be removed completely
+					new_height = minp.y-1;
+				end
+				new_height = math.max( new_height, extrema.minheight[i]);
+				local id_hole_right = detected.holes_markmap[ i-chunksize ];
+				if( id_hole_right and id_hole_right > 0) then
+					new_height = math.max( new_height, detected.holes.merged[id_hole_right].target_height);
+				end
+				local id_hole_prev  = detected.holes_markmap[ i-1 ];
+				if( id_hole_prev  and id_hole_prev > 0) then
+					new_height = math.min( new_height, detected.holes.merged[id_hole_prev ].target_height);
+				end
+				detected.hills.merged[id].target_height = new_height;
+				adjusted_heightmap[i] = new_height;
+				-- store for later use
+				detected.hills_markmap[i] = id;
+			end
+
+			-- is there a hole?
+			local hole_id = detected.holes_markmap[i];
+			if( hole_id and hole_id>0) then
+				-- which hole are we dealing with?
+				local id = detected.holes_merge_into[ hole_id ];
+				local new_height = detected.holes.merged[id].target_height;
+				if( not( new_height )) then
+					-- target height: height if this hole would be filled completely
+					new_height = maxp.y + 1;
+				end
+				new_height = math.min( new_height, extrema.maxheight[i]);
+				-- is either the neighbour to the right or in the south a hill?
+				-- we have processed that place already; thus we can be sure
+				-- that this is an id that can be fed to detected.hills.merged
+				-- directly
+				local id_hill_right = detected.hills_markmap[ i-chunksize ];
+				if( id_hill_right and id_hill_right > 0) then
+					new_height = math.min( new_height, detected.hills.merged[id_hill_right].target_height);
+				end
+				local id_hill_prev  = detected.hills_markmap[ i-1 ];
+				if( id_hill_prev  and id_hill_prev > 0) then
+					new_height = math.min( new_height, detected.hills.merged[id_hill_prev ].target_height);
+				end
+				detected.holes.merged[id].target_height = new_height;
+				adjusted_heightmap[i] = new_height;
+				-- store for later use
+				detected.holes_markmap[i] = id;
+			end
+		end
+	end
+	end
+	return adjusted_heightmap;
+end
 
 
 minetest.register_on_generated(function(minp, maxp, seed)
@@ -297,14 +378,15 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local chunksize = maxp.x - minp.x + 1;
 
 	local t1 = minetest.get_us_time();
-	extrema = mark_min_max_height_in_mapchunk(minp, maxp, heightmap);
-	detected = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
+	local extrema = mark_min_max_height_in_mapchunk(minp, maxp, heightmap);
+	local detected = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
+	local adjusted_heightmap = heightmap_with_hills_lowered_and_holes_filled( minp, maxp, heightmap, extrema, detected);
 	local t2 = minetest.get_us_time();
 	print("Time elapsed: "..tostring( t2-t1 ));
 
 
 	-- this is just for visualization
-	materials = {"default:fence_wood", "default:fence_junglewood",
+	local materials = {"default:fence_wood", "default:fence_junglewood",
 		 "default:fence_pine_wood","default:fence_acacia_wood",
 		 "default:fence_aspen_wood", "default:glass", "default:obsidian_glass",
 		 "default:ladder_wood", "default:ladder_steel",
@@ -346,28 +428,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	end
 
 
-	local adjusted_heightmap = {}
-	local i = 0
-	for az=minp.z,maxp.z do
-	for ax=minp.x,maxp.x do
-		i = i+1;
-		local real_h = heightmap[i];
-		local max_h = extrema.maxheight[i];
-		local min_h = extrema.minheight[i];
-
-		-- lower hills
-		if(     min_h  < real_h ) then
-			adjusted_heightmap[i] = min_h;
-		-- cover holes
-		elseif( real_h < max_h  and real_h <= min_h) then
-			adjusted_heightmap[i] = max_h;
-		else
-			adjusted_heightmap[i] = real_h;
-		end
-	end
-	end
-
-	local adjust_height = false; -- just a mode for debugging
+	local adjust_height = true; -- just a mode for debugging
 
 	-- show something to the user; change the landscape
 	local i = 0
@@ -381,7 +442,7 @@ minetest.register_on_generated(function(minp, maxp, seed)
 		else
 			-- is there a hill?
 			if( detected.hills_markmap[i] and detected.hills_markmap[i]>0) then
-				id = detected.hills_merge_into[ detected.hills_markmap[i] ];
+				local id = detected.hills_merge_into[ detected.hills_markmap[i] ];
 
 				if( adjust_height ) then
 					minetest.set_node( {x=ax, z=az, y=adjusted_heightmap[i]}, {name=detected.hills.merged[id].material} );
@@ -402,10 +463,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 			end
 --]]
 			if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
-				id = detected.holes_merge_into[ detected.holes_markmap[i] ];
+				local id = detected.holes_merge_into[ detected.holes_markmap[i] ];
 
 				if( adjust_height ) then
-					minetest.set_node( {x=ax, z=az, y=adjusted_heightmap[i]}, {name=detected.holes.merged[id].material} );
+					local hole = detected.holes.merged[id];
+					minetest.set_node( {x=ax, z=az, y=hole.target_height}, {name=hole.material});
 				else
 					if( detected.holes.merged[ id ] and detected.holes.merged[ id ].material) then
 						minetest.set_node( {x=ax, z=az, y=extrema.maxheight[i]}, {name=detected.holes.merged[id].material} );
