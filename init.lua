@@ -378,8 +378,11 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	local chunksize = maxp.x - minp.x + 1;
 
 	local t1 = minetest.get_us_time();
+	-- find places where the land could be lowered or raised
 	local extrema = mark_min_max_height_in_mapchunk(minp, maxp, heightmap);
+	-- distinguish between individual holes and hills
 	local detected = mark_holes_and_hills_in_mapchunk( minp, maxp, heightmap, extrema.minheight, extrema.maxheight);
+	-- flatten hills, fill holes (just virutal in adjusted_heightmap)
 	local adjusted_heightmap = heightmap_with_hills_lowered_and_holes_filled( minp, maxp, heightmap, extrema, detected);
 	local t2 = minetest.get_us_time();
 	print("Time elapsed: "..tostring( t2-t1 ));
@@ -459,9 +462,9 @@ minetest.register_on_generated(function(minp, maxp, seed)
 						print("Error: No material for hill id "..tostring(id)..", merged into "..tostring( detected.hills.merged[id])) -- TODO
 					end
 				end
-				--]]
 			end
---]]
+
+			-- is there a hole?
 			if( detected.holes_markmap[i] and detected.holes_markmap[i]>0) then
 				local id = detected.holes_merge_into[ detected.holes_markmap[i] ];
 
